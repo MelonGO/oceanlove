@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Ocean Love 3D</title>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <link href="static/css/main.css" rel="stylesheet" />
+</head>
+
+<body>
+    <div id="container">
+        <div id="gift">🎁 : <strong>{{ .gift }}</strong></div>
+    </div>
+
+    <script type="importmap">
+		{
+			"imports": {
+				"three": "./node_modules/three/build/three.module.js",
+				"three/addons/": "./node_modules/three/examples/jsm/"
+			}
+		}
+	</script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // import Stats from 'three/addons/libs/stats.module.js';
+        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { Water } from 'three/addons/objects/Water.js';
+        import { Sky } from 'three/addons/objects/Sky.js';
+
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        const FPS = 30; // 30帧每秒
+        const singleFrameTime = (1 / FPS);
+        let timeStamp = 0;
+
+        let container, stats;
+        let camera, scene, renderer;
+        let controls, water, sun, sky;
+        let clock, delta, frameClock;
+        let pmremGenerator, renderTarget;
+
+        let planeOne, planeTwo;
+        let imgCount = 2;
+        const imgEnd = 4;
+        let imgDirection = [1, 1, 0, 0, 1];
+        let switchImg = false;
+        let planeTexture, planeGeometry, planeMaterial;
+
+        let isSnowing = false;
+        let snowParameters;
+        const snowMaterials = [];
+        const snowSprites = [];
+
+        let isRaining = false;
+        let rain;
+        let rainCloudParticles = [];
+
+        let isSunny = true;
+
+        let cloudGeo, cloudMaterial;
+        let whiteClouds = [];
+
+        let sunAngle = 0;
+
+        let loader = new THREE.TextureLoader();
+
+        const FLOOR = - 250;
+        let mixer;
+        const morphs = [];
+
+        const parameters = {
+            elevation: 8,
+            azimuth: 180
+        };
+
+        let sendController, nextController;
+
+        let conn;
+        let gift = 'Heart';
+
+        let reef;
+
+        const giftSprites = [];
+        let giftTexture, giftGeometry, giftMaterial;
+        const giftPosition = new THREE.Vector3();
+
+        websocket();
+        init();
+        createObjects();
+        fetchStatus();
+        setInterval(fetchStatus, 10000);
+        animate();
+
+        function fetchStatus() {
+            var httpRequest = new XMLHttpRequest();
+            httpRequest.open('GET', '/fetchStatus', true);
+            httpRequest.send();
+            httpRequest.onreadystatechange = function () {
+                if (httpRequest.readyState == 4 && httpRequest.status == 200) {
+                    var text = httpRequest.responseText;
+                    document.querySelector('#gift strong').innerHTML = text;
+                }
+            };
+        }
+
+        function sendGift() {
+            let num = document.querySelector('#gift strong').innerHTML;
+
+            var httpRequest = new XMLHttpRequest();
+            httpRequest.open('GET', '/sendGift', true);
+            httpRequest.send();
+            httpRequest.onreadystatechange = function () {
+                if (httpRequest.readyState == 4 && httpRequest.status == 200) {
+                    var value = httpRequest.responseText;
+                    document.querySelector('#gift strong').innerHTML = value;
+                }
+            };
+        }
+
+        function handleMsg(msg) {
+            var pos = msg.split(',');
+
+            if (pos.length != 4) {
+                return;
+            }
+            switch (pos[0]) {
+                case 'Star':
+                    giftTexture = loader.load('static/img/star.png');
+                    giftTexture.colorSpace = THREE.SRGBColorSpace;
+                    break;
+                case 'Happy':
+                    giftTexture = loader.load('static/img/xi.png');
+                    giftTexture.colorSpace = THREE.SRGBColorSpace;
+                    break;
+                default:
+                    giftTexture = loader.load('static/img/heart.png');
+                    giftTexture.colorSpace = THREE.SRGBColorSpace;
+                    break;
+            }
+
+            giftMaterial = new THREE.SpriteMaterial({ map: giftTexture });
+
+            const sprite = new THREE.Sprite(giftMaterial);
+            sprite.position.set(pos[1] - 10, pos[2], pos[3] - 10);
+            sprite.scale.set(10, 10, 10);
+
+            scene.add(sprite);
+            giftSprites.push(sprite);
+        }
+
+        function websocket() {
+            if (window["WebSocket"]) {
+                conn = new WebSocket("wss://" + document.location.host + "/ws");
+                conn.onclose = function (evt) {
+                    console.log("Connection closed.");
+                };
+                conn.onmessage = function (evt) {
+                    var messages = evt.data.split('\n');
+                    for (var i = 0; i < messages.length; i++) {
+                        handleMsg(messages[i]);
+                    }
+                };
+            } else {
+                alert("Your browser does not support WebSockets.");
+                console.log("Your browser does not support WebSockets.");
+            }
+        }
+
+        function init() {
+
+            container = document.getElementById('container');
+
+            //
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            container.appendChild(renderer.domElement);
+
+            renderer.autoClear = false;
+
+            //
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 5000);
+            camera.position.set(38, 48, 123);
+            camera.rotation.y = 0.4;
+
+            // Clock
+            clock = new THREE.Clock();
+            frameClock = new THREE.Clock();
+
+            //
+
+            controls = new OrbitControls(camera, renderer.domElement);
+
+            controls.maxPolarAngle = Math.PI * 0.60;
+            controls.minPolarAngle = Math.PI * 0.40;
+            controls.maxAzimuthAngle = 0.90;
+            controls.minAzimuthAngle = 0.30;
+            controls.minDistance = 80.0;
+            controls.maxDistance = 130.0;
+            controls.enablePan = false;
+
+            controls.target.set(0, 50, 0);
+            controls.update();
+
+            //
+
+            // stats = new Stats();
+            // container.appendChild(stats.dom);
+
+            // GUI
+
+            const gui = new GUI();
+            gui.title("控制");
+
+            var params = new function () {
+                this.天气 = '晴';
+                this.weather = ['晴', '雪', '雨'];
+                this.下一张 = function () {
+                    nextController.disable();
+                    switchImg = true;
+                };
+                this.选择 = '❤️';
+                this.gifts = ['❤️', '⭐️', '囍'];
+                this.发送 = function () {
+                    giftPosition.copy(camera.position);
+                    conn.send(gift + ',' + giftPosition.x + ',' + giftPosition.y + ',' + giftPosition.z);
+                    sendController.disable();
+                    sendGift();
+                    var t = 5;
+                    var timer = setInterval(function () {
+                        sendController.$name.innerHTML = t;
+                        t--;
+                        if (t < 1) {
+                            t = 5;
+                            sendController.$name.innerHTML = '发送';
+                            sendController.enable();
+                            clearInterval(timer);
+                        }
+                    }, 1000);
+                };
+            };
+
+            nextController = gui.add(params, '下一张');
+
+            gui.add(params, '天气').options(params.weather).onChange(e => {
+                switch (e) {
+                    case '晴':
+                        if (isRaining) {
+                            isRaining = false;
+                            removeRain();
+                        }
+                        if (isSnowing) {
+                            isSnowing = false;
+                            removeSnow();
+                        }
+                        if (!isSunny) {
+                            createClouds();
+                            isSunny = true;
+                        }
+                        break;
+                    case '雪':
+                        if (isRaining) {
+                            isRaining = false;
+                            removeRain();
+                        }
+                        if (isSunny) {
+                            isSunny = false;
+                            removeCloud();
+                        }
+                        if (!isSnowing) {
+                            addSnow();
+                            isSnowing = true;
+                        }
+                        break;
+                    case '雨':
+                        if (isSnowing) {
+                            isSnowing = false;
+                            removeSnow();
+                        }
+                        if (isSunny) {
+                            isSunny = false;
+                            removeCloud();
+                        }
+                        if (!isRaining) {
+                            createPointRainy();
+                            isRaining = true;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            });
+
+            const folderGift = gui.addFolder('礼物');
+            folderGift.add(params, '选择').options(params.gifts).onChange(e => {
+                switch (e) {
+                    case '⭐️':
+                        gift = 'Star';
+                        break;
+                    case '囍':
+                        gift = 'Happy';
+                        break;
+                    default:
+                        gift = 'Heart';
+                        break;
+                }
+            });
+            sendController = folderGift.add(params, '发送');
+            folderGift.open();
+
+            // light
+            const ambientLight = new THREE.AmbientLight(0xf4f4f4, 0.7);
+            scene.add(ambientLight);
+
+            //
+
+            window.addEventListener('resize', onWindowResize);
+
+        }
+
+        function onWindowResize() {
+
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+        }
+
+        function createObjects() {
+            //
+
+            sun = new THREE.Vector3();
+
+            // Water
+
+            const waterGeometry = new THREE.PlaneGeometry(5000, 5000);
+
+            water = new Water(
+                waterGeometry,
+                {
+                    textureWidth: 512,
+                    textureHeight: 512,
+                    waterNormals: new THREE.TextureLoader().load('textures/waternormals.jpg', function (texture) {
+
+                        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+
+                    }),
+                    sunDirection: new THREE.Vector3(),
+                    sunColor: 0xffffff,
+                    waterColor: 0x6495ED,
+                    distortionScale: 3.8,
+                    fog: scene.fog !== undefined
+                }
+            );
+
+            water.rotation.x = - Math.PI / 2;
+
+            scene.add(water);
+
+            // Skybox
+
+            sky = new Sky();
+            sky.scale.setScalar(5000);
+            scene.add(sky);
+
+            const skyUniforms = sky.material.uniforms;
+
+            skyUniforms['turbidity'].value = 8;
+            skyUniforms['rayleigh'].value = 2;
+            skyUniforms['mieCoefficient'].value = 0.05;
+            skyUniforms['mieDirectionalG'].value = 0.9998;
+
+            pmremGenerator = new THREE.PMREMGenerator(renderer);
+
+            updateSun();
+
+            // Mesh
+            planeTexture = loader.load("static/img/img_0.jpg");
+            planeTexture.colorSpace = THREE.SRGBColorSpace;
+            switch (imgDirection[0]) {
+                case 0:
+                    planeGeometry = new THREE.PlaneGeometry(100, 75);
+                    break;
+                case 1:
+                    planeGeometry = new THREE.PlaneGeometry(75, 100);
+                    break;
+                default:
+                    break;
+            }
+            planeMaterial = new THREE.MeshStandardMaterial({ map: planeTexture, side: THREE.DoubleSide });
+
+            planeOne = new THREE.Mesh(planeGeometry, planeMaterial);
+            planeOne.position.y = 50;
+            planeOne.rotation.y = 70;
+            planeOne.position.x = 100;
+            scene.add(planeOne);
+
+            planeTexture = loader.load("static/img/img_1.jpg");
+            planeTexture.colorSpace = THREE.SRGBColorSpace;
+            switch (imgDirection[1]) {
+                case 0:
+                    planeGeometry = new THREE.PlaneGeometry(100, 75);
+                    break;
+                case 1:
+                    planeGeometry = new THREE.PlaneGeometry(75, 100);
+                    break;
+                default:
+                    break;
+            }
+            planeMaterial = new THREE.MeshStandardMaterial({ map: planeTexture, side: THREE.DoubleSide });
+
+            planeTwo = new THREE.Mesh(planeGeometry, planeMaterial);
+            planeTwo.position.y = 50;
+            planeTwo.rotation.y = 70;
+            planeTwo.position.x = 250;
+            scene.add(planeTwo);
+
+            //reef
+            const modelLoader = new GLTFLoader().setPath('/models/reef/');
+            modelLoader.load('scene.gltf', function (gltf) {
+                reef = gltf.scene;
+                reef.scale.set(0.6, 0.6, 0.6);
+                reef.rotation.y = -2.8;
+                reef.position.set(-65, 0, 15);
+
+                scene.add(reef);
+            });
+
+            // MORPHS
+
+            mixer = new THREE.AnimationMixer(scene);
+
+            function addMorph(mesh, clip, speed, duration, x, y, z, fudgeColor) {
+
+                mesh = mesh.clone();
+                mesh.material = mesh.material.clone();
+
+                if (fudgeColor) {
+
+                    mesh.material.color.offsetHSL(0, Math.random() * 0.5 - 0.25, Math.random() * 0.5 - 0.25);
+
+                }
+
+                mesh.speed = speed;
+
+                mixer.clipAction(clip, mesh).
+                    setDuration(duration).
+                    // to shift the playback out of phase:
+                    startAt(- duration * Math.random()).
+                    play();
+
+                mesh.position.set(x, y, z);
+                mesh.rotation.y = Math.PI / 2;
+
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+
+                scene.add(mesh);
+
+                morphs.push(mesh);
+
+            }
+
+            const gltfloader = new GLTFLoader();
+
+            gltfloader.load('models/gltf/Flamingo.glb', function (gltf) {
+
+                const mesh = gltf.scene.children[0];
+                const clip = gltf.animations[0];
+
+                addMorph(mesh, clip, 500, 1, - 2000 - Math.random() * 100, FLOOR + 600, - 1000 + Math.random() * 800);
+
+            });
+
+            gltfloader.load('models/gltf/Stork.glb', function (gltf) {
+
+                const mesh = gltf.scene.children[0];
+                const clip = gltf.animations[0];
+
+                addMorph(mesh, clip, 350, 1, - 2000 - Math.random() * 200, FLOOR + 350, - 1000 + Math.random() * 300);
+
+            });
+        }
+
+        function updateSun() {
+            let phi = THREE.MathUtils.degToRad(90 - sunAngle);
+            const theta = THREE.MathUtils.degToRad(parameters.azimuth);
+
+            sun.setFromSphericalCoords(1, phi, theta);
+
+            sky.material.uniforms['sunPosition'].value.copy(sun);
+            water.material.uniforms['sunDirection'].value.copy(sun).normalize();
+
+            if (renderTarget !== undefined) renderTarget.dispose();
+            renderTarget = pmremGenerator.fromScene(sky);
+            scene.environment = renderTarget.texture;
+        }
+
+        function renderSunny() {
+
+            if (whiteClouds.length == 0) {
+                createClouds();
+
+            } else {
+
+                for (let i = whiteClouds.length - 1; i >= 0; i--) {
+                    const p = whiteClouds[i];
+                    p.rotation.y = camera.rotation.y;
+                    p.rotation.z = camera.rotation.z;
+                    p.rotation.x = camera.rotation.x;
+                    p.position.x += 1;
+                    if (p.position.x > 300) {
+                        whiteClouds.splice(i, 1);
+                        scene.remove(p);
+                        p.geometry.dispose();
+                        p.material.dispose();
+                    }
+                }
+
+            }
+
+        }
+
+        function renderRain() {
+            const position = rain.geometry.attributes.position.array;
+            const velocity = rain.geometry.attributes.velocity.array;
+            for (let i = 0; i < position.length; i += 3) {
+                let k = 2 * (i % 3);
+                position[i] = position[i] - (velocity[k]);
+                position[i + 1] = position[i + 1] - (velocity[k + 1]);
+
+                if (position[i + 1] <= 0) position[i + 1] = 300;
+                if (position[i] <= -20 || position[i] >= 20) {
+                    velocity[k] = velocity[k] * -0.8;
+                }
+            }
+            rain.geometry.attributes.position.needsUpdate = true;
+            rain.geometry.attributes.velocity.needsUpdate = true;
+
+            rainCloudParticles.forEach(p => {
+                p.rotation.z -= 0.001;
+                p.rotation.y = camera.rotation.y;
+                p.rotation.x = camera.rotation.x;
+            });
+        }
+
+        function renderSnow() {
+            const time = Date.now() * 0.00005;
+
+            for (let i = 0; i < snowSprites.length; i++) {
+                const object = snowSprites[i];
+                if (object instanceof THREE.Points) {
+                    object.rotation.y = time * (i < 4 ? i + 1 : - (i + 1));
+                }
+            }
+
+            for (let i = 0; i < snowMaterials.length; i++) {
+                const color = snowParameters[i][0];
+                const h = (360 * (color[0] + time) % 360) / 360;
+                snowMaterials[i].color.setHSL(h, color[1], color[2]);
+            }
+        }
+
+        function createClouds() {
+
+            let cloud;
+            for (let p = 0; p < 10; p++) {
+                let cloudSize = Math.floor(Math.random() * (500 - 700)) + 700
+                cloudGeo = new THREE.PlaneGeometry(cloudSize, cloudSize);
+
+                let cloudIndex = Math.floor(Math.random() * (1 - 5)) + 5
+                let imgPath = 'static/img/cloud' + cloudIndex + '.png';
+                let texture = loader.load(imgPath);
+
+                cloudMaterial = new THREE.MeshStandardMaterial({
+                    map: texture,
+                    transparent: true
+                });
+
+                cloud = new THREE.Mesh(cloudGeo, cloudMaterial);
+                cloud.position.set(
+                    Math.random() * 1000 - 2000,
+                    900 - Math.random() * 300,
+                    Math.random() * 1200 - 500
+                );
+                cloud.rotation.y = 70;
+                cloud.rotation.z = Math.random() * 2 * Math.PI;
+                cloud.material.opacity = 0.9;
+                whiteClouds.push(cloud);
+                scene.add(cloud);
+            }
+        }
+
+        function createPointRainy() {
+
+            var texture = new THREE.TextureLoader().load("static/img/raindrop1.png");
+            var geom = new THREE.BufferGeometry();
+            const position = [];
+            const velocity = [];
+
+            var material = new THREE.PointsMaterial({
+                size: 0.7,
+                transparent: true, // 是否设置透明度
+                opacity: 0.5, // 透明
+                map: texture, // 粒子材质
+                blending: THREE.AdditiveBlending,
+                sizeAttenuation: true, // 是否相同尺寸
+                color: 0xf4f4f4
+            });
+
+            let range = 350;
+            let x, y, z, velocityX, velocityY;
+            for (var i = 0; i < 2000; i++) {
+                x = Math.random() * range - range / 2;
+                y = Math.random() * range * 1.5;
+                z = 1 + (i / 10 - 100);
+                position.push(x, y, z);
+
+                velocityX = ((Math.random() - 0.5) / 3) - 0.05;
+                velocityY = (3.1 + Math.random() / 5) - 0.1;
+                velocity.push(velocityX, velocityY);
+            }
+
+            geom.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+            geom.setAttribute('velocity', new THREE.Float32BufferAttribute(velocity, 2));
+
+            rain = new THREE.Points(geom, material);
+            scene.add(rain);
+
+            // Black cloud
+            loader.load("static/img/smoke.png", function (texture) {
+                cloudGeo = new THREE.PlaneGeometry(800, 800);
+                cloudMaterial = new THREE.MeshLambertMaterial({
+                    map: texture,
+                    transparent: true
+                });
+
+                let cloud;
+                for (let p = 0; p < 20; p++) {
+                    cloud = new THREE.Mesh(cloudGeo, cloudMaterial);
+                    cloud.position.set(
+                        Math.random() * 800 - 400,
+                        500 - Math.random() * 100,
+                        Math.random() * 500 - 500
+                    );
+                    cloud.rotation.y = 70;
+                    cloud.rotation.z = Math.random() * 2 * Math.PI;
+                    cloud.material.opacity = 0.7;
+                    rainCloudParticles.push(cloud);
+                    scene.add(cloud);
+                }
+            });
+        }
+
+        function removeRain() {
+            scene.remove(rain);
+            rain.geometry.dispose();
+            rain.material.dispose();
+
+            for (let i = rainCloudParticles.length - 1; i >= 0; i--) {
+                const object = rainCloudParticles[i];
+                scene.remove(object);
+                rainCloudParticles.splice(i, 1);
+                object.geometry.dispose();
+                object.material.dispose();
+            }
+        }
+
+        function addSnow() {
+
+            // Snow
+            const snowGeometry = new THREE.BufferGeometry();
+            const vertices = [];
+
+            const sprite1 = loader.load('static/img/snowflake2.png');
+            // const sprite2 = loader.load('textures/sprites/snowflake2.png');
+
+            let x, y, z;
+            for (let i = 0; i < 1200; i++) {
+                x = Math.random() * 2000 - 1000;
+                y = Math.random() * 2000 - 1000;
+                z = Math.random() * 2000 - 1000;
+
+                vertices.push(x, y, z);
+            }
+
+            snowGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            snowParameters = [
+                [[1.0, 0.2, 0.5], sprite1, 20],
+                [[0.95, 0.1, 0.5], sprite1, 15],
+                [[0.90, 0.05, 0.5], sprite1, 10],
+                [[0.85, 0, 0.5], sprite1, 8],
+                [[0.80, 0, 0.5], sprite1, 5]
+            ];
+
+            for (let i = 0; i < snowParameters.length; i++) {
+
+                const color = snowParameters[i][0];
+                const sprite = snowParameters[i][1];
+                const size = snowParameters[i][2];
+
+                snowMaterials[i] = new THREE.PointsMaterial({ size: size, map: sprite, blending: THREE.AdditiveBlending, depthTest: false, transparent: true });
+                snowMaterials[i].color.setHSL(color[0], color[1], color[2]);
+
+                const particles = new THREE.Points(snowGeometry, snowMaterials[i]);
+
+                particles.rotation.x = Math.random() * 6;
+                particles.rotation.y = Math.random() * 6;
+                particles.rotation.z = Math.random() * 6;
+
+                scene.add(particles);
+                snowSprites.push(particles);
+
+            }
+        }
+
+        function removeSnow() {
+            for (let i = snowSprites.length - 1; i >= 0; i--) {
+                const object = snowSprites[i];
+                scene.remove(object);
+                snowSprites.splice(i, 1);
+                object.geometry.dispose();
+                object.material.dispose();
+            }
+        }
+
+        function removeCloud() {
+            for (let i = whiteClouds.length - 1; i >= 0; i--) {
+                const object = whiteClouds[i];
+                scene.remove(object);
+                whiteClouds.splice(i, 1);
+                object.geometry.dispose();
+                object.material.dispose();
+            }
+        }
+
+        function updateGiftSprites(delta) {
+
+            for (let i = giftSprites.length - 1; i >= 0; i--) {
+                const sp = giftSprites[i];
+                sp.position.z -= delta * 6;
+                sp.position.x -= delta * 6;
+                if (sp.position.z < 0) {
+                    giftSprites.splice(i, 1);
+                    scene.remove(sp);
+                    sp.geometry.dispose();
+                    sp.material.dispose();
+                }
+            }
+
+        }
+
+        function UpdateImge(index) {
+
+            if (imgCount > imgEnd) {
+                imgCount = 0;
+            }
+
+            if (index == 1) {
+                scene.remove(planeOne);
+                planeOne.geometry.dispose();
+                planeOne.material.dispose();
+
+                planeTexture = loader.load('static/img/img_' + imgCount + '.jpg');
+                planeTexture.colorSpace = THREE.SRGBColorSpace;
+
+                switch (imgDirection[imgCount]) {
+                    case 0:
+                        planeGeometry = new THREE.PlaneGeometry(100, 75);
+                        break;
+                    case 1:
+                        planeGeometry = new THREE.PlaneGeometry(75, 100);
+                        break;
+                    default:
+                        break;
+                }
+                planeMaterial = new THREE.MeshStandardMaterial({ map: planeTexture, side: THREE.DoubleSide });
+
+                planeOne = new THREE.Mesh(planeGeometry, planeMaterial);
+                planeOne.position.y = 50;
+                planeOne.rotation.y = 70;
+                planeOne.position.x = 150;
+                scene.add(planeOne);
+                imgCount++;
+            }
+
+            if (index == 2) {
+                scene.remove(planeTwo);
+                planeTwo.geometry.dispose();
+                planeTwo.material.dispose();
+
+                planeTexture = loader.load('static/img/img_' + imgCount + '.jpg');
+                planeTexture.colorSpace = THREE.SRGBColorSpace;
+
+                switch (imgDirection[imgCount]) {
+                    case 0:
+                        planeGeometry = new THREE.PlaneGeometry(100, 75);
+                        break;
+                    case 1:
+                        planeGeometry = new THREE.PlaneGeometry(75, 100);
+                        break;
+                    default:
+                        break;
+                }
+                planeMaterial = new THREE.MeshStandardMaterial({ map: planeTexture, side: THREE.DoubleSide });
+
+                planeTwo = new THREE.Mesh(planeGeometry, planeMaterial);
+                planeTwo.position.y = 50;
+                planeTwo.rotation.y = 70;
+                planeTwo.position.x = 150;
+                scene.add(planeTwo);
+                imgCount++;
+            }
+        }
+
+        function animate() {
+
+            requestAnimationFrame(animate);
+
+            const delta = frameClock.getDelta(); //获取距离上次请求渲染的时间
+            timeStamp += delta;
+            if (timeStamp > singleFrameTime) {
+                render();
+                // stats.update();
+                timeStamp = (timeStamp % singleFrameTime);
+            }
+
+        }
+
+        function render() {
+
+            // const time = performance.now() * 0.001;
+
+            water.material.uniforms['time'].value += 1.0 / 30.0;
+
+            delta = clock.getDelta();
+            sunAngle += delta * 2;
+            if (sunAngle > 180) {
+                sunAngle = 0;
+            }
+
+            updateSun();
+
+            mixer.update(delta);
+
+            for (let i = 0; i < morphs.length; i++) {
+
+                const morph = morphs[i];
+
+                morph.position.x += morph.speed * delta;
+
+                if (morph.position.x > 3000) {
+                    morph.position.x = - 6000 - Math.random() * 500;
+                }
+
+            }
+
+            if (!switchImg) {
+                planeOne.position.x -= delta * 10;
+                if (planeOne.position.x < -50) {
+                    planeOne.position.z += delta * 10;
+                }
+                if (planeOne.position.z > 100) {
+                    UpdateImge(1);
+                    if (nextController._disabled) {
+                        nextController.enable();
+                    }
+                }
+
+                planeTwo.position.x -= delta * 10;
+                if (planeTwo.position.x < -50) {
+                    planeTwo.position.z += delta * 10;
+                }
+                if (planeTwo.position.z > 100) {
+                    UpdateImge(2);
+                    if (nextController._disabled) {
+                        nextController.enable();
+                    }
+                }
+            }
+
+            if (switchImg) {
+                if (planeOne.position.x < planeTwo.position.x) {
+                    planeOne.position.x -= delta * 50;
+                    if (planeOne.position.x < -50) {
+                        planeOne.position.z += delta * 50;
+                    }
+                    if (planeOne.position.z > 70) {
+                        switchImg = false;
+                    }
+
+                    planeTwo.position.x -= delta * 50;
+                    if (planeTwo.position.x < -50) {
+                        planeTwo.position.z += delta * 50;
+                    }
+                    if (planeTwo.position.z > 100) {
+                        UpdateImge(2);
+                    }
+
+                } else {
+                    planeOne.position.x -= delta * 50;
+                    if (planeOne.position.x < -50) {
+                        planeOne.position.z += delta * 50;
+                    }
+                    if (planeOne.position.z > 100) {
+                        UpdateImge(1);
+                    }
+
+                    planeTwo.position.x -= delta * 50;
+                    if (planeTwo.position.x < -50) {
+                        planeTwo.position.z += delta * 50;
+                    }
+                    if (planeTwo.position.z > 70) {
+                        switchImg = false;
+                    }
+                }
+
+            }
+
+            updateGiftSprites(delta);
+
+            if (isSunny) {
+                renderSunny();
+            }
+            if (isSnowing) {
+                renderSnow();
+            }
+            if (isRaining) {
+                renderRain();
+            }
+
+            renderer.clear();
+            renderer.render(scene, camera);
+
+        }
+
+    </script>
+</body>
+
+</html>

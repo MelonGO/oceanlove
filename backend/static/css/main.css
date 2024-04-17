@@ -1,0 +1,42 @@
+body {
+	margin: 0;
+	overscroll-behavior: none;
+}
+
+#gift {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    /* width: 100%; */
+    text-align: center;
+    z-index: 100;
+    color: white;
+    display: block;
+}
+
+.lil-gui { 
+	z-index: 2 !important;
+	--width: 150px;
+	--font-size: 16px;
+	--name-width: 30%;
+	--background-color: #f6f6f6;
+	--text-color: #3d3d3d;
+	--title-background-color: #efefef;
+	--title-text-color: #3d3d3d;
+	--widget-color: #eaeaea;
+	--hover-color: #f0f0f0;
+	--focus-color: #fafafa;
+	--number-color: #07aacf;
+	--string-color: #8da300;
+}
+
+/* @media all and ( max-width: 640px ) {
+	.lil-gui.root { 
+		right: auto;
+		top: auto;
+		max-height: 50%;
+		max-width: 80%;
+		bottom: 0;
+		left: 0;
+	}
+} */
